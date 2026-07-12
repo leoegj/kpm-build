@@ -3,39 +3,47 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build wxshadow.kpm
+
+      - name: Install deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq make cmake build-essential
-          # Install Android NDK
+          sudo apt-get install -y -qq make wget unzip
+
+      - name: Setup NDK
+        run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r28-linux.zip
           unzip -q android-ndk-r28-linux.zip
-          NDK=$PWD/android-ndk-r28
-          # Clone KPM infra
+          echo "NDK=$PWD/android-ndk-r28" >> $GITHUB_ENV
+
+      - name: Setup KernelPatch headers
+        run: |
+          git clone --depth=1 -b 0.13.2 https://github.com/bmax121/KernelPatch.git /tmp/kp
+          echo "KP_DIR=/tmp/kp" >> $GITHUB_ENV
+
+      - name: Build wxshadow.kpm
+        run: |
           git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm
-          # Clone KernelPatch for headers
-          git clone --depth=1 -b main https://github.com/nickbash/KernelPatch.git /tmp/kp
-          
-          # Copy wxshadow sources to KPM build dir
-          cp kpms/wxshadow/*.c kpms/wxshadow/*.h /tmp/kpm/ 2>/dev/null || true
-          
-          # Build using KPM Makefile
+          # Copy wxshadow sources
+          cp kpms/wxshadow/wxshadow*.c kpms/wxshadow/wxshadow*.h /tmp/kpm/ 2>/dev/null || true
+          # Update Makefile for wxshadow
           cd /tmp/kpm
-          export TARGET_COMPILE=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/
+          sed -i 's/objs := hello.o/objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
+          export NDK_PATH=$NDK
           export KP_DIR=/tmp/kp
           make clean 2>/dev/null || true
-          # Build with wxshadow sources
-          sed -i 's/objs := hello.o/objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
-          make all 2>&1 || true
+          make 2>&1
           ls -la *.kpm
           mkdir -p /tmp/out
-          cp *.kpm /tmp/out/ 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+          cp *.kpm /tmp/out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: kpm-modules
           path: /tmp/out/*.kpm
