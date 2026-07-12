@@ -23,7 +23,7 @@ jobs:
           export KP_DIR=/tmp/kp
           sed -i 's/hello/wxshadow/g' Makefile
           sed -i 's/hello\.o/wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
-          make CC=${NDK_PATH}aarch64-linux-android31-clang 2>&1
+          make CC=${NDK_PATH}aarch64-linux-android31-clang STRIP=${NDK_PATH}llvm-strip 2>&1
       - uses: actions/upload-artifact@v4
         with:
           name: wxshadow
