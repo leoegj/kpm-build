@@ -1,5 +1,8 @@
 name: Build wxshadow.kpm
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
 jobs:
   build:
     runs-on: ubuntu-latest
