@@ -1,62 +1,27 @@
-name: Build KPM
-on:
-  workflow_dispatch:
-  push:
-    branches: [master]
-
+name: Build wxshadow.kpm
+on: workflow_dispatch
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install deps
+      - name: Build
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq make wget unzip
-
-      - name: Setup NDK
-        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq make wget unzip
           wget -q https://dl.google.com/android/repository/android-ndk-r28-linux.zip
           unzip -q android-ndk-r28-linux.zip
-          echo "NDK=$PWD/android-ndk-r28" >> $GITHUB_ENV
-
-      - name: Setup KernelPatch headers
-        run: |
+          export NDK_PATH=$PWD/android-ndk-r28/toolchains/llvm/prebuilt/linux-x86_64/bin/
           git clone --depth=1 -b 0.13.2 https://github.com/bmax121/KernelPatch.git /tmp/kp
-
-      - name: Build wxshadow.kpm
-        run: |
           git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm
           cd /tmp/kpm
-          # Clean up hello and copy wxshadow sources
           rm -f hello.c hello.kpm hello.lds
-          cp $GITHUB_WORKSPACE/kpms/wxshadow/wxshadow*.c .
-          cp $GITHUB_WORKSPACE/kpms/wxshadow/wxshadow*.h .
-          # Rewrite Makefile for wxshadow
-          cat > Makefile << 'MAKEFILE'
-CC = $(NDK_PATH)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang
-INCLUDE_DIRS := . include patch/include linux/include linux/arch/arm64/include linux/tools/arch/arm64/include
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(dir))
-CFLAGS = -I. $(INCLUDE_FLAGS) -Wall -Ofast -fno-PIC -fno-asynchronous-unwind-tables -fno-stack-protector -fno-unwind-tables -fno-semantic-interposition -fno-common -fvisibility=hidden
-objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o
-all: wxshadow.kpm
-wxshadow.kpm: $${objs}
-	$(CC) -s -r -o $@ $^
-%.o: %.c
-	$(CC) $(CFLAGS) -c -O2 -o $@ $<
-clean:
-	rm -f *.o *.kpm
-MAKEFILE
-          export NDK_PATH=$NDK
+          cp $GITHUB_WORKSPACE/kpms/wxshadow/*.c . 2>/dev/null
+          cp $GITHUB_WORKSPACE/kpms/wxshadow/*.h . 2>/dev/null
           export KP_DIR=/tmp/kp
-          make 2>&1
-          ls -la *.kpm
-          mkdir -p /tmp/out
-          cp *.kpm /tmp/out/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          sed -i 's/hello/wxshadow/g' Makefile
+          sed -i 's/hello\.o/wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
+          make CC=${NDK_PATH}aarch64-linux-android31-clang 2>&1
+      - uses: actions/upload-artifact@v4
         with:
-          name: kpm-modules
-          path: /tmp/out/*.kpm
+          name: wxshadow
+          path: /tmp/kpm/wxshadow.kpm
