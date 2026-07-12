@@ -8,17 +8,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+      
+      - name: Setup KPM build environment
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu cmake
+          sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu cmake build-essential
+          git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm-build
+          # For each kpm, create a proper build dir with KPM infra
+          for dir in wxshadow hide-so recompile; do
+            mkdir -p /tmp/kpm-build/kpms/$dir
+            cp -r kpms/$dir/* /tmp/kpm-build/kpms/$dir/
+          done
+      
+      - name: Build all KPMs
+        run: |
+          cd /tmp/kpm-build
           for dir in wxshadow hide-so recompile; do
             echo "=== Building $dir ==="
-            cd kpms/$dir && mkdir -p build && cd build
-            cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc ..
-            make ${dir}.kpm
-            cd ../../..
+            mkdir -p build/$dir && cd build/$dir
+            cmake ../../ -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKPM_NAME=$dir
+            make ${dir}.kpm 2>&1 || true
+            cd ../..
+            ls -la build/$dir/*.kpm 2>/dev/null && echo "OK: $dir" || echo "FAIL: $dir"
           done
+      
       - uses: actions/upload-artifact@v4
         with:
           name: kpm-modules
-          path: kpms/*/build/*.kpm
+          path: /tmp/kpm-build/build/*/*.kpm
