@@ -24,19 +24,32 @@ jobs:
       - name: Setup KernelPatch headers
         run: |
           git clone --depth=1 -b 0.13.2 https://github.com/bmax121/KernelPatch.git /tmp/kp
-          echo "KP_DIR=/tmp/kp" >> $GITHUB_ENV
 
       - name: Build wxshadow.kpm
         run: |
           git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm
-          # Copy wxshadow sources
-          cp kpms/wxshadow/wxshadow*.c kpms/wxshadow/wxshadow*.h /tmp/kpm/ 2>/dev/null || true
-          # Update Makefile for wxshadow
           cd /tmp/kpm
-          sed -i 's/objs := hello.o/objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
+          # Clean up hello and copy wxshadow sources
+          rm -f hello.c hello.kpm hello.lds
+          cp $GITHUB_WORKSPACE/kpms/wxshadow/wxshadow*.c .
+          cp $GITHUB_WORKSPACE/kpms/wxshadow/wxshadow*.h .
+          # Rewrite Makefile for wxshadow
+          cat > Makefile << 'MAKEFILE'
+CC = $(NDK_PATH)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang
+INCLUDE_DIRS := . include patch/include linux/include linux/arch/arm64/include linux/tools/arch/arm64/include
+INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(dir))
+CFLAGS = -I. $(INCLUDE_FLAGS) -Wall -Ofast -fno-PIC -fno-asynchronous-unwind-tables -fno-stack-protector -fno-unwind-tables -fno-semantic-interposition -fno-common -fvisibility=hidden
+objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o
+all: wxshadow.kpm
+wxshadow.kpm: $${objs}
+	$(CC) -s -r -o $@ $^
+%.o: %.c
+	$(CC) $(CFLAGS) -c -O2 -o $@ $<
+clean:
+	rm -f *.o *.kpm
+MAKEFILE
           export NDK_PATH=$NDK
           export KP_DIR=/tmp/kp
-          make clean 2>/dev/null || true
           make 2>&1
           ls -la *.kpm
           mkdir -p /tmp/out
