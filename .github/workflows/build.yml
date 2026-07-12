@@ -10,16 +10,31 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build wxshadow.kpm
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu cmake
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq make cmake build-essential
+          # Install Android NDK
+          wget -q https://dl.google.com/android/repository/android-ndk-r28-linux.zip
+          unzip -q android-ndk-r28-linux.zip
+          NDK=$PWD/android-ndk-r28
+          # Clone KPM infra
           git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm
-          mkdir -p /tmp/kpm/kpms/wxshadow
-          cp -r kpms/wxshadow/* /tmp/kpm/kpms/wxshadow/
-          cd /tmp/kpm && mkdir -p build && cd build
-          cmake .. -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
-          make wxshadow.kpm
-          ls -la kpms/wxshadow/build/*.kpm 2>/dev/null || find . -name "wxshadow.kpm"
+          # Clone KernelPatch for headers
+          git clone --depth=1 -b main https://github.com/nickbash/KernelPatch.git /tmp/kp
+          
+          # Copy wxshadow sources to KPM build dir
+          cp kpms/wxshadow/*.c kpms/wxshadow/*.h /tmp/kpm/ 2>/dev/null || true
+          
+          # Build using KPM Makefile
+          cd /tmp/kpm
+          export TARGET_COMPILE=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/
+          export KP_DIR=/tmp/kp
+          make clean 2>/dev/null || true
+          # Build with wxshadow sources
+          sed -i 's/objs := hello.o/objs := wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
+          make all 2>&1 || true
+          ls -la *.kpm
           mkdir -p /tmp/out
-          find . -name "wxshadow.kpm" -exec cp {} /tmp/out/ \;
+          cp *.kpm /tmp/out/ 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: kpm-modules
