@@ -1,30 +1,39 @@
-name: Build wxshadow.kpm
+name: Build KPM Modules
 on:
   workflow_dispatch:
   push:
     branches: [master]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+      - name: Install cross-compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y gcc-aarch64-linux-gnu cmake
+      - name: Setup KernelPatch headers
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq make wget unzip
-          wget -q https://dl.google.com/android/repository/android-ndk-r28-linux.zip
-          unzip -q android-ndk-r28-linux.zip
-          export NDK_PATH=$PWD/android-ndk-r28/toolchains/llvm/prebuilt/linux-x86_64/bin/
           git clone --depth=1 -b 0.13.2 https://github.com/bmax121/KernelPatch.git /tmp/kp
-          git clone --depth=1 https://github.com/udochina/KPM-Build-Anywhere.git /tmp/kpm
-          cd /tmp/kpm
-          rm -f hello.c hello.kpm hello.lds
-          cp $GITHUB_WORKSPACE/kpms/wxshadow/*.c . 2>/dev/null
-          cp $GITHUB_WORKSPACE/kpms/wxshadow/*.h . 2>/dev/null
-          export KP_DIR=/tmp/kp
-          sed -i 's/hello/wxshadow/g' Makefile
-          sed -i 's/hello\.o/wxshadow.o wxshadow_pgtable.o wxshadow_handlers.o wxshadow_bp.o wxshadow_scan.o/' Makefile
-          make CC=${NDK_PATH}aarch64-linux-android31-clang STRIP=${NDK_PATH}llvm-strip 2>&1
+          echo "KP_DIR=/tmp/kp" >> $GITHUB_ENV
+      - name: Build wxshadow.kpm
+        run: |
+          cd kpms/wxshadow && mkdir -p build && cd build
+          cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKP_DIR=/tmp/kp ../..
+          make wxshadow.kpm 2>&1
+      - name: Build recompile.kpm
+        run: |
+          cd kpms/recompile && mkdir -p build && cd build
+          cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKP_DIR=/tmp/kp ../..
+          make recompile.kpm 2>&1
+      - name: Build hide-maps.kpm
+        run: |
+          cd kpms/hide-maps && mkdir -p build && cd build
+          cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKP_DIR=/tmp/kp ../..
+          make hide-maps.kpm 2>&1
+      - name: List results
+        run: |
+          find kpms -name "*.kpm" -exec ls -lh {} \;
       - uses: actions/upload-artifact@v4
         with:
-          name: wxshadow
-          path: /tmp/kpm/wxshadow.kpm
+          name: kpm-modules
+          path: kpms/*/build/*.kpm
