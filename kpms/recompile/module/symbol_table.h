@@ -26,7 +26,7 @@ static const char *const rc_sym_raw_spin_unlock[] = {
     "__raw_spin_unlock",
 };
 
-static const char *const rc_sym_find_vma[] = { "find_vma" };
+static const char *const rc_sym_find_vma[] = { "__find_vma", "find_vma" };
 static const char *const rc_sym_get_task_mm[] = { "get_task_mm" };
 static const char *const rc_sym_mmput[] = { "mmput" };
 static const char *const rc_sym_kzalloc[] = { "kzalloc", "__kmalloc" };
