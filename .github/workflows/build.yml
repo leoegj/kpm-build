@@ -19,8 +19,11 @@ jobs:
           cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKP_DIR=/tmp/kp .
           make wxshadow.kpm recompile.kpm hide-maps.kpm 2>&1
       - name: List results
-        run: ls -lh *.kpm
+        run: find . -name "*.kpm" -exec ls -lh {} \;
       - uses: actions/upload-artifact@v4
         with:
           name: kpm-modules
-          path: "*.kpm"
+          path: |
+            kpms/wxshadow/wxshadow.kpm
+            kpms/recompile/recompile.kpm
+            kpms/hide-maps/hide-maps.kpm
