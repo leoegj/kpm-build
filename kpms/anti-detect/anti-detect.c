@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * anti-detect: Hide emulator files from apps
+ * anti-detect: Hide emulator files and frida-server from apps
  * - Blocks stat/access/readlink with ENOENT
  * - Filters directory listings (getdents64) to remove matching entries
+ * - Hides frida-server process from /proc scans
  * - Allows openat (needed for GPU rendering via goldfish_pipe)
  * - Only affects regular apps (uid >= 10000)
  */
@@ -21,10 +22,10 @@
 #include "../common/kpm_demo_helpers.h"
 
 KPM_MODULE_INFO("anti-detect",
-                "1.2.0",
+                "1.3.0",
                 "GPL v2",
                 "wwb",
-                "Hide emulator files and KernelPatch presence from apps");
+                "Hide emulator files, frida-server process, and KernelPatch presence from apps");
 
 /* anti-detect-supercall.c */
 extern int supercall_guard_init(const char *superkey);
@@ -53,10 +54,55 @@ struct linux_dirent64 {
     char           d_name[];
 };
 
+/* Task struct field access - task->comm offset (TASK_COMM_LEN=16) */
+#include <linux/sched.h>
+#include <linux/pid.h>
+
+/* Resolved by kallsyms */
+static struct task_struct *(*kfn_find_task_by_vpid)(pid_t nr);
+
+/* Hidden process name keywords (matched against task->comm) */
+static const char *hidden_proc_names[] = {
+    "frida",
+    NULL,
+};
+
+/* Hidden filename keywords */
 static const char *hidden_names[] = {
     "goldfish_",
     NULL,
 };
+
+/* Check if a PID entry corresponds to a hidden process */
+static int should_hide_proc(const char *name)
+{
+    pid_t nr;
+    char *endp;
+    struct task_struct *task;
+
+    /* Only check numeric entries (PID directories) */
+    if (!name || name[0] < '0' || name[0] > '9')
+        return 0;
+
+    /* Walk the task list via find_task_by_vpid for this numeric entry */
+    nr = simple_strtol(name, &endp, 10);
+    if (*endp != '\0')
+        return 0; /* not a pure numeric PID */
+
+    if (!kfn_find_task_by_vpid)
+        return 0;
+
+    task = kfn_find_task_by_vpid(nr);
+    if (!task)
+        return 0;
+
+    /* Check if task comm matches any hidden process keyword */
+    for (const char **p = hidden_proc_names; *p; p++) {
+        if (strstr(task->comm, *p))
+            return 1;
+    }
+    return 0;
+}
 
 static int should_hide(const char *name)
 {
@@ -97,7 +143,7 @@ static int getdents_has_hidden(char __user *ubuf, long len)
             return 0;
         if (reclen == 0 || pos + reclen > end) break;
         long nlen = compat_strncpy_from_user(name, pos + offsetof(struct linux_dirent64, d_name), sizeof(name));
-        if (nlen > 0 && should_hide(name))
+        if (nlen > 0 && (should_hide(name) || should_hide_proc(name)))
             return 1;
         pos += reclen;
     }
@@ -141,7 +187,7 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
         unsigned short reclen = d->d_reclen;
         if (reclen == 0 || src + reclen > end) break;
 
-        if (!should_hide(d->d_name)) {
+        if (!should_hide(d->d_name) && !should_hide_proc(d->d_name)) {
             if (dst != src)
                 memmove(dst, src, reclen);
             dst += reclen;
@@ -189,6 +235,15 @@ static int resolve_symbols(void)
 
     pr_info("anti-detect: symbols resolved: kmalloc=%px kfree=%px copy_from_user=%px\n",
             kfn_kmalloc, kfn_kfree, kfn_copy_from_user);
+
+    /* find_task_by_vpid - for hiding processes by PID */
+    kfn_find_task_by_vpid = (typeof(kfn_find_task_by_vpid))kallsyms_lookup_name("find_task_by_vpid");
+    if (!kfn_find_task_by_vpid) {
+        pr_warn("anti-detect: find_task_by_vpid not found, process hiding disabled\n");
+    } else {
+        pr_info("anti-detect: find_task_by_vpid=%px\n", kfn_find_task_by_vpid);
+    }
+
     return 0;
 }
 
