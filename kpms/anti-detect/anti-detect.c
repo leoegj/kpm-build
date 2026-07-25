@@ -61,18 +61,6 @@ struct task_struct;
 static struct task_struct *(*kfn_find_task_by_vpid)(pid_t nr);
 static void (*kfn_get_task_comm)(char *to, struct task_struct *task);
 
-/* Hidden process name keywords (matched against task->comm via get_task_comm) */
-static const char *hidden_proc_names[] = {
-    "frida",
-    NULL,
-};
-
-/* Hidden filename keywords */
-static const char *hidden_names[] = {
-    "goldfish_",
-    NULL,
-};
-
 /* Check if a PID entry corresponds to a hidden process */
 static int should_hide_proc(const char *name)
 {
@@ -100,20 +88,13 @@ static int should_hide_proc(const char *name)
     kfn_get_task_comm(comm, task);
     comm[15] = '\0';
 
-    for (const char **p = hidden_proc_names; *p; p++) {
-        if (strstr(comm, *p))
-            return 1;
-    }
-    return 0;
+    /* Match "frida" in task name (catches frida-server, re.frida.helper) */
+    return strstr(comm, "frida") != NULL;
 }
 
 static int should_hide(const char *name)
 {
-    for (const char **p = hidden_names; *p; p++) {
-        if (strstr(name, *p))
-            return 1;
-    }
-    return 0;
+    return strstr(name, "goldfish_") != NULL;
 }
 
 /* Block stat/access/readlink for hidden files */
