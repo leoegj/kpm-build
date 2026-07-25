@@ -18,7 +18,7 @@ jobs:
       - name: Build all KPMs
         run: |
           cmake -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DKP_DIR=/tmp/kp .
-          make wxshadow.kpm recompile.kpm hide-maps.kpm 2>&1
+          make wxshadow.kpm recompile.kpm hide-maps.kpm anti-detect.kpm 2>&1
       - name: List results
         run: find . -name "*.kpm" -exec ls -lh {} \;
       - uses: actions/upload-artifact@v4
@@ -28,3 +28,4 @@ jobs:
             kpms/wxshadow/wxshadow.kpm
             kpms/recompile/recompile.kpm
             kpms/hide-maps/hide-maps.kpm
+            kpms/anti-detect/anti-detect.kpm
