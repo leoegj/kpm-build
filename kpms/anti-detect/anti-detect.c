@@ -54,14 +54,14 @@ struct linux_dirent64 {
     char           d_name[];
 };
 
-/* Task struct field access - task->comm offset (TASK_COMM_LEN=16) */
-#include <linux/sched.h>
-#include <linux/pid.h>
+/* Forward declaration - full struct not needed with get_task_comm */
+struct task_struct;
 
 /* Resolved by kallsyms */
 static struct task_struct *(*kfn_find_task_by_vpid)(pid_t nr);
+static void (*kfn_get_task_comm)(char *to, struct task_struct *task);
 
-/* Hidden process name keywords (matched against task->comm) */
+/* Hidden process name keywords (matched against task->comm via get_task_comm) */
 static const char *hidden_proc_names[] = {
     "frida",
     NULL,
@@ -84,21 +84,24 @@ static int should_hide_proc(const char *name)
     if (!name || name[0] < '0' || name[0] > '9')
         return 0;
 
-    /* Walk the task list via find_task_by_vpid for this numeric entry */
     nr = simple_strtol(name, &endp, 10);
     if (*endp != '\0')
         return 0; /* not a pure numeric PID */
 
-    if (!kfn_find_task_by_vpid)
+    if (!kfn_find_task_by_vpid || !kfn_get_task_comm)
         return 0;
 
     task = kfn_find_task_by_vpid(nr);
     if (!task)
         return 0;
 
-    /* Check if task comm matches any hidden process keyword */
+    /* Use get_task_comm to safely read task->comm */
+    char comm[16];
+    kfn_get_task_comm(comm, task);
+    comm[15] = '\0';
+
     for (const char **p = hidden_proc_names; *p; p++) {
-        if (strstr(task->comm, *p))
+        if (strstr(comm, *p))
             return 1;
     }
     return 0;
@@ -238,10 +241,14 @@ static int resolve_symbols(void)
 
     /* find_task_by_vpid - for hiding processes by PID */
     kfn_find_task_by_vpid = (typeof(kfn_find_task_by_vpid))kallsyms_lookup_name("find_task_by_vpid");
-    if (!kfn_find_task_by_vpid) {
-        pr_warn("anti-detect: find_task_by_vpid not found, process hiding disabled\n");
+
+    /* get_task_comm - safe way to read task comm */
+    kfn_get_task_comm = (typeof(kfn_get_task_comm))kallsyms_lookup_name("get_task_comm");
+
+    if (!kfn_find_task_by_vpid || !kfn_get_task_comm) {
+        pr_warn("anti-detect: find_task_by_vpid/get_task_comm not found, process hiding disabled\n");
     } else {
-        pr_info("anti-detect: find_task_by_vpid=%px\n", kfn_find_task_by_vpid);
+        pr_info("anti-detect: process hiding ready\n");
     }
 
     return 0;
