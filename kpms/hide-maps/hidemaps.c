@@ -39,18 +39,12 @@ void show_map_vma_after(hook_fargs2_t* args, void * udata){
     int start = args->local.data0;
     seq_file* m = (seq_file*) args->arg0;
     int end = m->count;
-    // 检测maps是否符合我们的情况
     char * line = vmalloc(end - start + 1);
-    // for (int i = 0; i < end - start; i++){
-    //     line[i] = m->buf[start + i];
-    // }
     memcpy(line, m->buf + start, end - start);
     line[end - start] = 0;
 
-    // char *pos = strstr(m->buf + start, "rwxp");
-    char *pos1 = strstr(m->buf + start, "wwb_");
-    if (pos1 && pos1 < m->buf + end) {
-        // pos[1] = '-';  // rwxp -> r-xp
+    /* Hide maps lines containing any of these keywords */
+    if (strstr(line, "wwb_") || strstr(line, "frida")) {
         m->count = start;
     }
     vfree(line);
