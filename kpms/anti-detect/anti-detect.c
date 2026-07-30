@@ -192,53 +192,48 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
     kfn_kfree(kbuf);
 }
 
-/* Filter unix_seq_show output for @/frida socket names */
-/* Minimal seq_file struct (same pattern as hide-maps) */
-typedef struct {
-    char *buf;
-    size_t size;
-    size_t from;
-    size_t count;
-} ks_seq_file;
+/* Hook vfs_read to filter @/frida in read output */
+static void *kfn_vfs_read;
+static int vfs_read_ready;
 
-/* Hook target - resolved via kallsyms */
-static void *kfn_unix_seq_show;
-static int unix_seq_show_ready;
-
-/* Saved seq_file count before unix_seq_show writes a line */
-static void unix_seq_show_before(hook_fargs2_t *args, void *udata)
-{
-    ks_seq_file *m = (ks_seq_file *)args->arg0;
-    args->local.data0 = m->count;
-}
-
-static void unix_seq_show_after(hook_fargs2_t *args, void *udata)
+static void after_vfs_read(hook_fargs2_t *args, void *udata)
 {
     uid_t uid = current_uid();
     if (uid < AID_APP_START) return;
 
-    size_t start = args->local.data0;
-    ks_seq_file *m = (ks_seq_file *)args->arg0;
-    size_t end = m->count;
-    if (end <= start) return;
+    /* Get return value - number of bytes read */
+    long ret = (long)args->ret;
+    if (ret <= 0 || ret > 65536) return;
 
-    /* Scan the newly written line for @/frida */
-    char *line = m->buf + start;
-    size_t len = end - start;
+    char __user *ubuf = (char __user *)args->arg1;
+    if (!ubuf) return;
 
-    if (len >= 7) {
-        char *p = line;
-        char *p_end = line + len - 6;
-        while (p < p_end) {
-            if (p[0] == '@' && p[1] == '/' && p[2] == 'f' &&
-                p[3] == 'r' && p[4] == 'i' && p[5] == 'd' && p[6] == 'a') {
-                /* Remove this entire line */
-                m->count = start;
-                break;
-            }
-            p++;
-        }
+    char *kbuf = kfn_kmalloc(ret, GFP_KERNEL_VAL);
+    if (!kbuf) return;
+
+    if (kfn_copy_from_user(kbuf, ubuf, ret)) {
+        kfn_kfree(kbuf);
+        return;
     }
+
+    /* Scan for @/frida and null it out */
+    char *p = kbuf;
+    char *end = kbuf + ret - 6;
+    int modified = 0;
+    while (p < end) {
+        if (p[0] == '@' && p[1] == '/' && p[2] == 'f' &&
+            p[3] == 'r' && p[4] == 'i' && p[5] == 'd' && p[6] == 'a') {
+            memset(p, 0, 7);
+            modified = 1;
+            break;
+        }
+        p++;
+    }
+
+    if (modified)
+        compat_copy_to_user(ubuf, kbuf, ret);
+
+    kfn_kfree(kbuf);
 }
 
 static int resolve_symbols(void)
@@ -285,13 +280,13 @@ static int resolve_symbols(void)
         pr_info("anti-detect: process hiding ready\n");
     }
 
-    /* unix_seq_show - for filtering @/frida from /proc/net/unix */
-    kfn_unix_seq_show = kallsyms_lookup_name("unix_seq_show");
-    if (kfn_unix_seq_show) {
-        unix_seq_show_ready = 1;
-        pr_info("anti-detect: unix_seq_show found, socket filtering ready\n");
+    /* vfs_read - for filtering @/frida from read output */
+    kfn_vfs_read = kallsyms_lookup_name("vfs_read");
+    if (kfn_vfs_read) {
+        vfs_read_ready = 1;
+        pr_info("anti-detect: vfs_read found, socket filtering ready\n");
     } else {
-        pr_warn("anti-detect: unix_seq_show not found, socket filtering disabled\n");
+        pr_warn("anti-detect: vfs_read not found, socket filtering disabled\n");
     }
 
     return 0;
@@ -337,16 +332,16 @@ static long anti_detect_init(const char *args, const char *event, void *__user r
 
     pr_info("anti-detect: %d hooks installed\n", hooks_installed);
 
-    /* hook unix_seq_show for filtering @/frida from /proc/net/unix */
-    if (unix_seq_show_ready) {
-        hook_err_t err = hook_wrap2(kfn_unix_seq_show,
-                                     unix_seq_show_before,
-                                     unix_seq_show_after,
+    /* hook vfs_read for filtering @/frida from read output */
+    if (vfs_read_ready) {
+        hook_err_t err = hook_wrap2(kfn_vfs_read,
+                                     NULL,
+                                     after_vfs_read,
                                      NULL);
         if (err)
-            pr_warn("anti-detect: unix_seq_show hook failed: %d\n", err);
+            pr_warn("anti-detect: vfs_read hook failed: %d\n", err);
         else
-            pr_info("anti-detect: unix_seq_show hooked\n");
+            pr_info("anti-detect: vfs_read hooked\n");
     }
 
     /* args = superkey for supercall guard (optional) */
@@ -373,8 +368,8 @@ static long anti_detect_exit(void *__user reserved)
         const struct syscall_hook *h = &hooks[i];
         unhook_syscalln(h->nr, h->before, h->after);
     }
-    if (unix_seq_show_ready)
-        unhook(kfn_unix_seq_show);
+    if (vfs_read_ready)
+        unhook(kfn_vfs_read);
     pr_info("anti-detect: unloaded\n");
     return 0;
 }
