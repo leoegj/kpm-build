@@ -192,7 +192,7 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
 }
 
 /* Filter read output for @frida unix sockets in /proc/net/unix */
-#define SCAN_BUF_SIZE 4096
+#define SCAN_BUF_SIZE 16384
 
 static void after_read_syscall(hook_fargs4_t *args, void *udata)
 {
@@ -205,7 +205,7 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
     char __user *ubuf = (char __user *)syscall_argn(args, 1);
     if (!ubuf) return;
 
-    /* Only scan small reads (typical /proc/net/unix reads are 1-4KB) */
+    /* Only scan reads up to SCAN_BUF_SIZE */
     long scan_len = ret;
     if (scan_len > SCAN_BUF_SIZE)
         scan_len = SCAN_BUF_SIZE;
