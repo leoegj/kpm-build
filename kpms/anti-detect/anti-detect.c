@@ -241,7 +241,8 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
     }
 
     if (modified) {
-        compat_copy_to_user(ubuf, kbuf, scan_len);
+        if (compat_copy_to_user(ubuf, kbuf, scan_len) == 0)
+            ; /* successfully updated user buffer */
     }
 
     kfn_kfree(kbuf);
