@@ -301,7 +301,7 @@ struct syscall_hook {
     void *after;
 };
 
-static const struct syscall_hook hooks[] = {
+static struct syscall_hook hooks[] = {
     /* stat/access - block with ENOENT */
     { __NR_faccessat,     3, before_stat_syscall, 0 },
     { __NR_faccessat2,    4, before_stat_syscall, 0 },
