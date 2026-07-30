@@ -15,6 +15,7 @@
 #include <linux/uaccess.h>
 #include <linux/string.h>
 #include <syscall.h>
+#include <hook.h>
 #include <kputils.h>
 #include <kallsyms.h>
 #include <asm/current.h>
@@ -191,67 +192,53 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
     kfn_kfree(kbuf);
 }
 
-/* Filter read output for @frida unix sockets in /proc/net/unix */
-#define SCAN_BUF_SIZE 16384
+/* Filter unix_seq_show output for @/frida socket names */
+/* Minimal seq_file struct (same pattern as hide-maps) */
+typedef struct {
+    char *buf;
+    size_t size;
+    size_t from;
+    size_t count;
+} ks_seq_file;
 
-static void after_read_syscall(hook_fargs4_t *args, void *udata)
+/* Hook target - resolved via kallsyms */
+static void *kfn_unix_seq_show;
+static int unix_seq_show_ready;
+
+/* Saved seq_file count before unix_seq_show writes a line */
+static void unix_seq_show_before(hook_fargs2_t *args, void *udata)
+{
+    ks_seq_file *m = (ks_seq_file *)args->arg0;
+    args->local.data0 = m->count;
+}
+
+static void unix_seq_show_after(hook_fargs2_t *args, void *udata)
 {
     uid_t uid = current_uid();
-    if (uid < AID_APP_START) {
-        pr_err("anti-detect: read hook fired but uid=%d skipped\n", uid);
-        return;
-    }
+    if (uid < AID_APP_START) return;
 
-    long ret = (long)args->ret;
-    pr_err("anti-detect: read hook fired uid=%d ret=%ld\n", uid, ret);
+    size_t start = args->local.data0;
+    ks_seq_file *m = (ks_seq_file *)args->arg0;
+    size_t end = m->count;
+    if (end <= start) return;
 
-    char __user *ubuf = (char __user *)syscall_argn(args, 1);
-    if (!ubuf) return;
+    /* Scan the newly written line for @/frida */
+    char *line = m->buf + start;
+    size_t len = end - start;
 
-    /* Only scan reads up to SCAN_BUF_SIZE */
-    long scan_len = ret;
-    if (scan_len > SCAN_BUF_SIZE)
-        scan_len = SCAN_BUF_SIZE;
-
-    char *kbuf = kfn_kmalloc(scan_len, GFP_KERNEL_VAL);
-    if (!kbuf) return;
-
-    if (kfn_copy_from_user(kbuf, ubuf, scan_len)) {
-        kfn_kfree(kbuf);
-        return;
-    }
-
-    /* Search for "@frida" in the buffer and null it out */
-    char *pos = kbuf;
-    char *end = kbuf + scan_len - 7;  /* need at least 7 bytes for "@/frida" */
-    int modified = 0;
-
-    while (pos < end) {
-        /* Look for '@/frida' (frida unix socket naming) */
-        if (pos[0] == '@' && pos[1] == '/' && pos[2] == 'f' &&
-            pos[3] == 'r' && pos[4] == 'i' && pos[5] == 'd' && pos[6] == 'a') {
-            /* Find the end of this line (null or newline) */
-            char *line_end = pos;
-            while (line_end < kbuf + scan_len && *line_end != '\n' && *line_end != '\0')
-                line_end++;
-            /* Null out the entire line */
-            memset(pos, 0, line_end - pos);
-            modified = 1;
-            pr_err("anti-detect: filtered @/frida in read buffer\n");
-            pos = line_end;
-        } else {
-            pos++;
+    if (len >= 7) {
+        char *p = line;
+        char *p_end = line + len - 6;
+        while (p < p_end) {
+            if (p[0] == '@' && p[1] == '/' && p[2] == 'f' &&
+                p[3] == 'r' && p[4] == 'i' && p[5] == 'd' && p[6] == 'a') {
+                /* Remove this entire line */
+                m->count = start;
+                break;
+            }
+            p++;
         }
     }
-
-    if (modified) {
-        if (compat_copy_to_user(ubuf, kbuf, scan_len) == 0)
-            ; /* successfully updated user buffer */
-        else
-            pr_err("anti-detect: copy_to_user failed\n");
-    }
-
-    kfn_kfree(kbuf);
 }
 
 static int resolve_symbols(void)
@@ -298,6 +285,15 @@ static int resolve_symbols(void)
         pr_info("anti-detect: process hiding ready\n");
     }
 
+    /* unix_seq_show - for filtering @/frida from /proc/net/unix */
+    kfn_unix_seq_show = kallsyms_lookup_name("unix_seq_show");
+    if (kfn_unix_seq_show) {
+        unix_seq_show_ready = 1;
+        pr_info("anti-detect: unix_seq_show found, socket filtering ready\n");
+    } else {
+        pr_warn("anti-detect: unix_seq_show not found, socket filtering disabled\n");
+    }
+
     return 0;
 }
 
@@ -317,8 +313,6 @@ static struct syscall_hook hooks[] = {
     { __NR_readlinkat,    4, before_stat_syscall, 0 },
     /* getdents64 - filter output */
     { __NR_getdents64,    3, 0, after_getdents64 },
-    /* read - filter @frida from /proc/net/unix */
-    { __NR_read,          3, 0, after_read_syscall },
 };
 
 #define NUM_HOOKS (sizeof(hooks) / sizeof(hooks[0]))
@@ -342,6 +336,18 @@ static long anti_detect_init(const char *args, const char *event, void *__user r
     }
 
     pr_info("anti-detect: %d hooks installed\n", hooks_installed);
+
+    /* hook unix_seq_show for filtering @/frida from /proc/net/unix */
+    if (unix_seq_show_ready) {
+        hook_err_t err = hook_wrap2(kfn_unix_seq_show,
+                                     unix_seq_show_before,
+                                     unix_seq_show_after,
+                                     NULL);
+        if (err)
+            pr_warn("anti-detect: unix_seq_show hook failed: %d\n", err);
+        else
+            pr_info("anti-detect: unix_seq_show hooked\n");
+    }
 
     /* args = superkey for supercall guard (optional) */
     if (supercall_guard_init(args))
@@ -367,6 +373,8 @@ static long anti_detect_exit(void *__user reserved)
         const struct syscall_hook *h = &hooks[i];
         unhook_syscalln(h->nr, h->before, h->after);
     }
+    if (unix_seq_show_ready)
+        unhook(kfn_unix_seq_show);
     pr_info("anti-detect: unloaded\n");
     return 0;
 }
