@@ -197,10 +197,13 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
 static void after_read_syscall(hook_fargs4_t *args, void *udata)
 {
     uid_t uid = current_uid();
-    if (uid < AID_APP_START) return;
+    if (uid < AID_APP_START) {
+        pr_err("anti-detect: read hook fired but uid=%d skipped\n", uid);
+        return;
+    }
 
     long ret = (long)args->ret;
-    if (ret <= 0) return;
+    pr_err("anti-detect: read hook fired uid=%d ret=%ld\n", uid, ret);
 
     char __user *ubuf = (char __user *)syscall_argn(args, 1);
     if (!ubuf) return;
