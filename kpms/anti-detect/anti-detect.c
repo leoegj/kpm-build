@@ -22,10 +22,10 @@
 #include "../common/kpm_demo_helpers.h"
 
 KPM_MODULE_INFO("anti-detect",
-                "1.3.0",
+                "1.4.0",
                 "GPL v2",
                 "wwb",
-                "Hide emulator files, frida-server process, and KernelPatch presence from apps");
+                "Hide emulator files, frida-server process, frida unix sockets, and KernelPatch presence from apps");
 
 /* anti-detect-supercall.c */
 extern int supercall_guard_init(const char *superkey);
@@ -191,6 +191,63 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
     kfn_kfree(kbuf);
 }
 
+/* Filter read output for @frida unix sockets in /proc/net/unix */
+#define SCAN_BUF_SIZE 4096
+
+static void after_read_syscall(hook_fargs4_t *args, void *udata)
+{
+    uid_t uid = current_uid();
+    if (uid < AID_APP_START) return;
+
+    long ret = (long)args->ret;
+    if (ret <= 0) return;
+
+    char __user *ubuf = (char __user *)syscall_argn(args, 1);
+    if (!ubuf) return;
+
+    /* Only scan small reads (typical /proc/net/unix reads are 1-4KB) */
+    long scan_len = ret;
+    if (scan_len > SCAN_BUF_SIZE)
+        scan_len = SCAN_BUF_SIZE;
+
+    char *kbuf = kfn_kmalloc(scan_len, GFP_KERNEL_VAL);
+    if (!kbuf) return;
+
+    if (kfn_copy_from_user(kbuf, ubuf, scan_len)) {
+        kfn_kfree(kbuf);
+        return;
+    }
+
+    /* Search for "@frida" in the buffer and null it out */
+    char *pos = kbuf;
+    char *end = kbuf + scan_len - 6;  /* need at least 6 bytes for "@frida" */
+    int modified = 0;
+
+    while (pos < end) {
+        /* Look for '@' followed by 'frida' */
+        if (pos[0] == '@' && pos[1] == 'f' && pos[2] == 'r' &&
+            pos[3] == 'i' && pos[4] == 'd' && pos[5] == 'a') {
+            /* Find the end of this line (null or newline) */
+            char *line_end = pos;
+            while (line_end < kbuf + scan_len && *line_end != '\n' && *line_end != '\0')
+                line_end++;
+            /* Null out the entire line */
+            memset(pos, 0, line_end - pos);
+            modified = 1;
+            pos = line_end;
+        } else {
+            pos++;
+        }
+    }
+
+    if (modified) {
+        if (compat_copy_to_user(ubuf, kbuf, scan_len) != scan_len)
+            pr_debug("anti-detect: frida socket filtered from read output\n");
+    }
+
+    kfn_kfree(kbuf);
+}
+
 static int resolve_symbols(void)
 {
     /* kmalloc - try multiple names */
@@ -254,6 +311,8 @@ static const struct syscall_hook hooks[] = {
     { __NR_readlinkat,    4, before_stat_syscall, 0 },
     /* getdents64 - filter output */
     { __NR_getdents64,    3, 0, after_getdents64 },
+    /* read - filter @frida from /proc/net/unix */
+    { __NR_read,          3, 0, after_read_syscall },
 };
 
 #define NUM_HOOKS (sizeof(hooks) / sizeof(hooks[0]))
