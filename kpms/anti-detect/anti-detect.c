@@ -220,13 +220,13 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
 
     /* Search for "@frida" in the buffer and null it out */
     char *pos = kbuf;
-    char *end = kbuf + scan_len - 6;  /* need at least 6 bytes for "@frida" */
+    char *end = kbuf + scan_len - 7;  /* need at least 7 bytes for "@/frida" */
     int modified = 0;
 
     while (pos < end) {
-        /* Look for '@' followed by 'frida' */
-        if (pos[0] == '@' && pos[1] == 'f' && pos[2] == 'r' &&
-            pos[3] == 'i' && pos[4] == 'd' && pos[5] == 'a') {
+        /* Look for '@/frida' (frida unix socket naming) */
+        if (pos[0] == '@' && pos[1] == '/' && pos[2] == 'f' &&
+            pos[3] == 'r' && pos[4] == 'i' && pos[5] == 'd' && pos[6] == 'a') {
             /* Find the end of this line (null or newline) */
             char *line_end = pos;
             while (line_end < kbuf + scan_len && *line_end != '\n' && *line_end != '\0')
