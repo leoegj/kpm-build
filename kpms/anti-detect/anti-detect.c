@@ -193,10 +193,10 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
 }
 
 /* Hook vfs_read to filter @/frida in read output */
-static void *kfn_vfs_read;
-static int vfs_read_ready;
+static void *kfn_seq_read;
+static int seq_read_ready;
 
-static void after_vfs_read(hook_fargs2_t *args, void *udata)
+static void after_seq_read(hook_fargs2_t *args, void *udata)
 {
     uid_t uid = current_uid();
     if (uid < AID_APP_START) return;
@@ -280,13 +280,13 @@ static int resolve_symbols(void)
         pr_info("anti-detect: process hiding ready\n");
     }
 
-    /* vfs_read - for filtering @/frida from read output */
-    kfn_vfs_read = kallsyms_lookup_name("vfs_read");
-    if (kfn_vfs_read) {
-        vfs_read_ready = 1;
-        pr_info("anti-detect: vfs_read found, socket filtering ready\n");
+    /* seq_read - for filtering @/frida from seq_file reads */
+    kfn_seq_read = kallsyms_lookup_name("seq_read");
+    if (kfn_seq_read) {
+        seq_read_ready = 1;
+        pr_info("anti-detect: seq_read found\n");
     } else {
-        pr_warn("anti-detect: vfs_read not found, socket filtering disabled\n");
+        pr_warn("anti-detect: seq_read not found\n");
     }
 
     return 0;
@@ -333,10 +333,10 @@ static long anti_detect_init(const char *args, const char *event, void *__user r
     pr_info("anti-detect: %d hooks installed\n", hooks_installed);
 
     /* hook vfs_read for filtering @/frida from read output */
-    if (vfs_read_ready) {
-        hook_err_t err = hook_wrap2(kfn_vfs_read,
+    if (seq_read_ready) {
+        hook_err_t err = hook_wrap2(kfn_seq_read,
                                      NULL,
-                                     after_vfs_read,
+                                     after_seq_read,
                                      NULL);
         if (err)
             pr_warn("anti-detect: vfs_read hook failed: %d\n", err);
@@ -368,8 +368,8 @@ static long anti_detect_exit(void *__user reserved)
         const struct syscall_hook *h = &hooks[i];
         unhook_syscalln(h->nr, h->before, h->after);
     }
-    if (vfs_read_ready)
-        unhook(kfn_vfs_read);
+    if (seq_read_ready)
+        unhook(kfn_seq_read);
     pr_info("anti-detect: unloaded\n");
     return 0;
 }
