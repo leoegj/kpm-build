@@ -241,8 +241,7 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
     }
 
     if (modified) {
-        if (compat_copy_to_user(ubuf, kbuf, scan_len) != scan_len)
-            pr_debug("anti-detect: frida socket filtered from read output\n");
+        compat_copy_to_user(ubuf, kbuf, scan_len);
     }
 
     kfn_kfree(kbuf);
