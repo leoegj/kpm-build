@@ -234,6 +234,7 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
             /* Null out the entire line */
             memset(pos, 0, line_end - pos);
             modified = 1;
+            pr_err("anti-detect: filtered @/frida in read buffer\n");
             pos = line_end;
         } else {
             pos++;
@@ -243,6 +244,8 @@ static void after_read_syscall(hook_fargs4_t *args, void *udata)
     if (modified) {
         if (compat_copy_to_user(ubuf, kbuf, scan_len) == 0)
             ; /* successfully updated user buffer */
+        else
+            pr_err("anti-detect: copy_to_user failed\n");
     }
 
     kfn_kfree(kbuf);
